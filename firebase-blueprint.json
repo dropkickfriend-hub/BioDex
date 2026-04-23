@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Authenticated professional citizen scientist",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "ageVerified": { "type": "boolean" },
+        "observationCount": { "type": "integer" },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "ageVerified"]
+    },
+    "Observation": {
+      "title": "Species Observation",
+      "description": "A scientifically identified specimen observation",
+      "type": "object",
+      "properties": {
+        "speciesId": { "type": "string" },
+        "commonName": { "type": "string" },
+        "scientificName": { "type": "string" },
+        "category": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "description": { "type": "string" },
+        "habitat": { "type": "string" },
+        "hazards": { "type": "array", "items": { "type": "string" } },
+        "location": {
+          "type": "object",
+          "properties": {
+            "geohash": { "type": "string" },
+            "privacyLevel": { "type": "integer" }
+          }
+        },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["speciesId", "commonName", "scientificName", "userId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User account and verification status"
+    },
+    "/observations/{observationId}": {
+      "schema": "Observation",
+      "description": "Individual species observations"
+    },
+    "/global_data/summary": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "totalObservations": { "type": "integer" },
+          "rareSpeciesFound": { "type": "integer" }
+        }
+      },
+      "description": "Aggregated scientific metrics for the community"
+    }
+  }
+}

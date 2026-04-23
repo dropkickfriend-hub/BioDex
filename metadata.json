@@ -1,0 +1,6 @@
+{
+  "name": "BioDex",
+  "description": "A sophisticated citizen science platform for identifying natural plant species and wildlife. A professional tool for tracking biodiversity, conservation, and environmental hazards.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": []
+}

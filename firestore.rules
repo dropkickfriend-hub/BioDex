@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Entity Validations ---
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.ageVerified == true &&
+             data.observationCount is int &&
+             data.joinedAt is string &&
+             (data.displayName == null || (data.displayName is string && data.displayName.size() <= 256)) &&
+             (data.email == null || (data.email is string && data.email.size() <= 256));
+    }
+
+    function isValidObservation(data) {
+      return data.userId == request.auth.uid &&
+             data.species is map &&
+             data.species.scientificName is string &&
+             data.timestamp is string &&
+             data.reviewStatus in ['Draft', 'Submitted', 'Under Review', 'Verified', 'Rejected'];
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && 
+                      isValidId(userId) && 
+                      isValidUser(incoming());
+      allow update: if isOwner(userId) && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['observationCount', 'displayName', 'joinedAt']) &&
+                      incoming().ageVerified == existing().ageVerified;
+    }
+
+    match /observations/{obsId} {
+      // 8. Secure List Queries: Enforce ownership check in the rule
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Immutability: Observations are for scientific records. No updates/deletes from client.
+      allow create: if isSignedIn() && 
+                      isValidId(obsId) && 
+                      isValidObservation(incoming());
+    }
+
+    match /global_data/summary {
+      allow read: if isSignedIn();
+      // No client writes to global summaries. These are handled by server/system (in this blueprint).
+    }
+    
+    // Internal system path for connectivity check
+    match /_internal_system_/connectivity_check {
+      allow get: if isSignedIn();
+    }
+  }
+}
