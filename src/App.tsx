@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Book, Search, Shield, Info, Activity, User, ChevronRight, AlertTriangle, LogIn, Loader2, MapPin, Target, ShieldAlert, CheckCircle2, Globe, Navigation, Layers, Send } from 'lucide-react';
+import { Camera, Book, Search, Shield, Info, Activity, User, ChevronRight, AlertTriangle, LogIn, Loader2, MapPin, Target, ShieldAlert, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Species, CollectionEntry, ReviewStatus, FieldMission } from './types';
 import { identifySpecies } from './services/geminiService';
@@ -32,6 +32,17 @@ export default function App() {
   const [missions, setMissions] = useState<FieldMission[]>([]);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [userObservations, setUserObservations] = useState('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const triggerCapture = () => {
+    if (!user) {
+      setShowAgeGate(true);
+      return;
+    }
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -161,43 +172,76 @@ export default function App() {
   };
 
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
+    input.value = '';
     if (!file || !user) return;
+
+    setUploadError(null);
+
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Invalid transmission. Specimen capture requires image data (JPEG, PNG, WebP).');
+      return;
+    }
+    const MAX_BYTES = 10 * 1024 * 1024;
+    if (file.size > MAX_BYTES) {
+      setUploadError(`Capture exceeds 10MB transmission limit (received ${(file.size / 1024 / 1024).toFixed(1)}MB). Compress and retry.`);
+      return;
+    }
 
     setIsAnalyzing(true);
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        const identified = await identifySpecies(base64);
-        
-        // Persist to Firestore
-        const newRecord: Partial<CollectionEntry> = {
-          species: identified,
-          userId: user.uid,
-          timestamp: new Date().toISOString(),
-          reviewStatus: 'Draft',
-          location: coords ? {
-            lat: coords.lat,
-            lng: coords.lng,
-            areaName: 'Current Sector'
-          } : undefined
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          const data = result.split(',')[1];
+          if (!data) reject(new Error('Failed to encode capture data.'));
+          else resolve(data);
         };
+        reader.onerror = () => reject(reader.error ?? new Error('FileReader transmission failed.'));
+        reader.readAsDataURL(file);
+      });
 
-        const docRef = await addDoc(collection(db, 'observations'), newRecord);
-        
-        setSelectedSpecies({ ...newRecord, id: docRef.id } as CollectionEntry);
-        setIsAnalyzing(false);
+      const identified = await identifySpecies(base64);
+
+      const newRecord: Partial<CollectionEntry> = {
+        species: identified,
+        userId: user.uid,
+        timestamp: new Date().toISOString(),
+        reviewStatus: 'Draft',
+        location: coords ? {
+          lat: coords.lat,
+          lng: coords.lng,
+          areaName: 'Current Sector'
+        } : undefined
       };
-      reader.readAsDataURL(file);
+
+      const docRef = await addDoc(collection(db, 'observations'), newRecord);
+
+      setSelectedSpecies({ ...newRecord, id: docRef.id } as CollectionEntry);
+      setActiveTab('dex');
     } catch (error) {
       console.error("Identification failed:", error);
+      const message = error instanceof Error ? error.message : 'Capture analysis failed. Retry transmission.';
+      setUploadError(message);
+    } finally {
       setIsAnalyzing(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-app-bg text-app-text font-sans flex flex-col selection:bg-emerald-500/30">
+      {/* Shared hidden file input — driven by every Capture trigger in the UI */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleCapture}
+        className="hidden"
+      />
+
       {/* Header / Mission Briefing */}
       {/* Age Gate Overlay */}
       <AnimatePresence>
@@ -365,13 +409,22 @@ export default function App() {
         <div className="flex items-center gap-6">
           {user ? (
             <div className="flex items-center gap-6">
+              <button
+                onClick={triggerCapture}
+                disabled={isAnalyzing}
+                className="hidden md:inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-app-bg font-bold uppercase text-[10px] tracking-widest rounded-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.15)]"
+                title="Capture specimen"
+              >
+                {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                Capture Specimen
+              </button>
               <div className="flex flex-col items-end">
                 <span className="text-[10px] text-gray-400 uppercase tracking-widest leading-none mb-1">Field Operator</span>
                 <span className="text-xs font-mono leading-none">{user.displayName || 'Anonymous'}</span>
                 <span className="text-[8px] text-emerald-500/60 font-mono uppercase leading-none mt-1">ID: {user.uid.slice(0, 10)}</span>
               </div>
               <div className="h-8 w-px bg-app-line"></div>
-              <button 
+              <button
                 onClick={() => auth.signOut()}
                 className="p-2 hover:bg-red-500/10 rounded-full transition-colors group"
                 title="Deactivate Session"
@@ -573,9 +626,17 @@ export default function App() {
                   <div className="h-full border border-app-line border-dashed rounded-lg p-12 bg-white/[0.01] flex flex-col items-center justify-center text-center">
                     <Book className="w-12 h-12 text-gray-700 mb-6" />
                     <h3 className="text-lg font-serif italic text-white mb-2">Operational Archive Vacant</h3>
-                    <p className="text-xs text-gray-500 max-w-xs font-mono uppercase tracking-wider">
+                    <p className="text-xs text-gray-500 max-w-xs font-mono uppercase tracking-wider mb-6">
                       Execute capture sequence to populate database with identified specimens.
                     </p>
+                    <button
+                      onClick={triggerCapture}
+                      disabled={isAnalyzing}
+                      className="inline-flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-app-bg font-bold uppercase text-[10px] tracking-widest rounded-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+                    >
+                      {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                      Initiate Capture
+                    </button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -952,6 +1013,34 @@ export default function App() {
       </AnimatePresence>
       </main>
 
+      {/* Upload Error Toast */}
+      <AnimatePresence>
+        {uploadError && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-28 md:bottom-16 left-1/2 -translate-x-1/2 z-[110] max-w-md w-[calc(100%-2rem)]"
+            role="alert"
+          >
+            <div className="bg-app-surface border border-red-500/40 rounded-sm p-4 shadow-2xl flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] font-mono uppercase tracking-widest text-red-500 mb-1">Capture Error</p>
+                <p className="text-[11px] text-gray-300 leading-relaxed break-words">{uploadError}</p>
+              </div>
+              <button
+                onClick={() => setUploadError(null)}
+                className="text-gray-500 hover:text-white transition-colors shrink-0"
+                aria-label="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Status Footer */}
       <footer className="h-10 bg-app-subtle border-t border-app-line flex items-center px-6 justify-between text-[10px] text-gray-500 font-mono z-30">
         <div className="flex gap-4">
@@ -992,17 +1081,14 @@ export default function App() {
             <span className="text-[8px] uppercase font-bold tracking-[0.2em]">Index</span>
           </button>
 
-          <div className="relative">
-            <input 
-              type="file" 
-              accept="image/*" 
-              onChange={handleCapture}
-              className="absolute inset-0 opacity-0 cursor-pointer z-10"
-            />
-            <button className="relative w-12 h-12 -mt-10 rounded bg-emerald-600 text-app-bg flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95 transition-all">
-              <Camera className="w-6 h-6" />
-            </button>
-          </div>
+          <button
+            onClick={triggerCapture}
+            disabled={isAnalyzing}
+            className="relative w-12 h-12 -mt-10 rounded bg-emerald-600 text-app-bg flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+            aria-label="Capture specimen"
+          >
+            {isAnalyzing ? <Loader2 className="w-6 h-6 animate-spin" /> : <Camera className="w-6 h-6" />}
+          </button>
 
           <button 
             onClick={() => setActiveTab('community')}
