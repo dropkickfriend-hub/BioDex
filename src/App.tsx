@@ -33,6 +33,7 @@ export default function App() {
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [userObservations, setUserObservations] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
@@ -126,10 +127,21 @@ export default function App() {
   }, [user]);
 
   const handleLogin = async () => {
+    setAuthError(null);
     try {
       await signIn();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
+      const code = error?.code as string | undefined;
+      const message =
+        code === 'auth/unauthorized-domain'
+          ? 'This domain is not authorized for sign-in. Add it to Firebase Authentication → Settings → Authorized domains.'
+          : code === 'auth/popup-blocked'
+          ? 'Your browser blocked the sign-in popup. Allow popups for this site and retry.'
+          : code === 'auth/popup-closed-by-user'
+          ? 'Sign-in window was closed before completion. Retry to continue.'
+          : error?.message || 'Sign-in failed. Retry transmission.';
+      setAuthError(message);
     }
   };
 
@@ -280,14 +292,22 @@ export default function App() {
                 </div>
 
                 {!user ? (
-                  <button 
-                    onClick={handleLogin}
-                    disabled={isAuthLoading}
-                    className="w-full py-4 bg-white text-black font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-gray-200 active:scale-95 transition-all rounded-sm text-xs"
-                  >
-                    {isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
-                    Initialize Personnel Link
-                  </button>
+                  <>
+                    <button
+                      onClick={handleLogin}
+                      disabled={isAuthLoading}
+                      className="w-full py-4 bg-white text-black font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-gray-200 active:scale-95 transition-all rounded-sm text-xs"
+                    >
+                      {isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
+                      Initialize Personnel Link
+                    </button>
+                    {authError && (
+                      <div className="p-3 rounded-sm border border-red-500/40 bg-red-500/5 text-left" role="alert">
+                        <p className="text-[9px] font-mono uppercase tracking-widest text-red-500 mb-1">Handshake Failure</p>
+                        <p className="text-[11px] text-red-300 leading-relaxed break-words">{authError}</p>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <button 
                     onClick={verifyAge}
