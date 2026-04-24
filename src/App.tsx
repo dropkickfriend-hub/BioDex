@@ -1,21 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Camera, Book, Search, Shield, Info, Activity, User, ChevronRight, AlertTriangle, LogIn, Loader2, MapPin, Target, ShieldAlert, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
+import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
 import { cn } from './lib/utils';
-import { Species, CollectionEntry, ReviewStatus, FieldMission } from './types';
+import { CollectionEntry, FieldMission } from './types';
 import { identifySpecies } from './services/geminiService';
-import { auth, db, signIn, handleFirestoreError } from './services/firebase';
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  getDocs, 
-  onSnapshot, 
-  serverTimestamp, 
-  setDoc, 
-  doc, 
-  getDoc 
+import { auth, db, signInAnon, handleFirestoreError } from './services/firebase';
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+  doc,
 } from 'firebase/firestore';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
@@ -25,22 +23,15 @@ export default function App() {
   const [selectedSpecies, setSelectedSpecies] = useState<CollectionEntry | null>(null);
   const [inventory, setInventory] = useState<CollectionEntry[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showAgeGate, setShowAgeGate] = useState(true);
-  const [showMissionBrief, setShowMissionBrief] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
   const [missions, setMissions] = useState<FieldMission[]>([]);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [userObservations, setUserObservations] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
-    if (!user) {
-      setShowAgeGate(true);
-      return;
-    }
+    if (!user) return;
     setUploadError(null);
     fileInputRef.current?.click();
   };
@@ -92,16 +83,11 @@ export default function App() {
   }, [coords]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      setIsAuthLoading(false);
-      
-      if (user) {
-        // Check if user is already verified in BioDex system
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists() && userDoc.data()?.ageVerified) {
-          setShowAgeGate(false);
-        }
+    const unsubscribe = onAuthStateChanged(auth, (current) => {
+      if (current) {
+        setUser(current);
+      } else {
+        signInAnon().catch((error) => console.error('Anonymous sign-in failed:', error));
       }
     });
     return () => unsubscribe();
@@ -126,44 +112,6 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  const handleLogin = async () => {
-    setAuthError(null);
-    try {
-      await signIn();
-    } catch (error: any) {
-      console.error("Login failed:", error);
-      const code = error?.code as string | undefined;
-      const message =
-        code === 'auth/unauthorized-domain'
-          ? 'This domain is not authorized for sign-in. Add it to Firebase Authentication → Settings → Authorized domains.'
-          : code === 'auth/popup-blocked'
-          ? 'Your browser blocked the sign-in popup. Allow popups for this site and retry.'
-          : code === 'auth/popup-closed-by-user'
-          ? 'Sign-in window was closed before completion. Retry to continue.'
-          : error?.message || 'Sign-in failed. Retry transmission.';
-      setAuthError(message);
-    }
-  };
-
-  const verifyAge = async () => {
-    if (!user) return;
-    
-    try {
-      await setDoc(doc(db, 'users', user.uid), {
-        uid: user.uid,
-        displayName: user.displayName || 'Anonymous Operator',
-        email: user.email || 'hidden@mesh.network',
-        ageVerified: true,
-        observationCount: 0,
-        joinedAt: new Date().toISOString()
-      });
-      setShowAgeGate(false);
-      setShowMissionBrief(true);
-    } catch (error) {
-      handleFirestoreError(error, 'create', `users/${user.uid}`);
-    }
-  };
-  
   const submitForReview = async () => {
     if (!selectedSpecies || !user) return;
     setIsSubmittingReview(true);
@@ -254,140 +202,6 @@ export default function App() {
         className="hidden"
       />
 
-      {/* Header / Mission Briefing */}
-      {/* Age Gate Overlay */}
-      <AnimatePresence>
-        {showAgeGate && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-app-bg flex items-center justify-center p-6"
-          >
-            <div className="max-w-md w-full space-y-10 text-center">
-              <div className="flex flex-col items-center gap-6">
-                <div className="w-20 h-20 bg-app-surface border border-app-line flex items-center justify-center rounded-sm">
-                  <Shield className="w-10 h-10 text-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.2)]" />
-                </div>
-                <div className="space-y-2">
-                  <h2 className="text-3xl font-serif italic text-white tracking-tight leading-none">Personnel Verification</h2>
-                  <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-gray-500">Security Access Protocol v4.2</p>
-                </div>
-                <p className="text-xs text-gray-400 leading-relaxed max-w-xs">
-                  Biota Explorer is a specialized scientific instrument. Participation requires 
-                  strict adherence to biosecurity protocols and ethical specimen observation.
-                </p>
-              </div>
-
-              <div className="space-y-6">
-                <div className="p-5 rounded border border-app-line bg-app-surface text-left space-y-3">
-                  <div className="flex gap-3 items-start">
-                    <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-gray-300 font-sans">User must be 18+ for field operation. All sessions are logged to the mesh ledger.</p>
-                  </div>
-                  <div className="flex gap-3 items-start">
-                    <LogIn className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-gray-300 font-sans">Authenticated cloud profile required for data sharding and persistence.</p>
-                  </div>
-                </div>
-
-                {!user ? (
-                  <>
-                    <button
-                      onClick={handleLogin}
-                      disabled={isAuthLoading}
-                      className="w-full py-4 bg-white text-black font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-gray-200 active:scale-95 transition-all rounded-sm text-xs"
-                    >
-                      {isAuthLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
-                      Initialize Personnel Link
-                    </button>
-                    {authError && (
-                      <div className="p-3 rounded-sm border border-red-500/40 bg-red-500/5 text-left" role="alert">
-                        <p className="text-[9px] font-mono uppercase tracking-widest text-red-500 mb-1">Handshake Failure</p>
-                        <p className="text-[11px] text-red-300 leading-relaxed break-words">{authError}</p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <button 
-                    onClick={verifyAge}
-                    className="w-full py-4 bg-emerald-600 text-app-bg font-bold uppercase tracking-widest hover:bg-emerald-500 active:scale-95 transition-all shadow-[0_0_40px_rgba(16,185,129,0.2)] rounded-sm text-xs"
-                  >
-                    Confirm Adult Identity (18+)
-                  </button>
-                )}
-                
-                <div className="flex flex-col gap-1 items-center">
-                  <p className="text-[9px] text-gray-500 uppercase tracking-widest font-mono">
-                    {user ? `Identified: ${user.email}` : 'Waiting for secure handshake...'}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Mission Briefing Overlay */}
-      <AnimatePresence>
-        {showMissionBrief && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[90] bg-app-void/90 backdrop-blur-md flex items-center justify-center p-6 overflow-y-auto"
-          >
-            <div className="max-w-xl w-full bg-app-surface border border-app-line rounded-lg overflow-hidden shadow-2xl">
-              <div className="p-8 border-b border-app-line bg-app-bg/50">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-sm">
-                    <Info className="w-5 h-5 text-emerald-500" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-serif italic text-white tracking-tight leading-none">Mission Directives</h3>
-                    <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mt-1">Status: Unread Protocol</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-8 space-y-8">
-                <section>
-                  <h4 className="text-[9px] uppercase font-bold tracking-widest text-emerald-500/60 mb-3 font-mono border-b border-app-line pb-1 w-fit">Primary Objective</h4>
-                  <p className="text-xs text-gray-400 leading-relaxed font-sans">
-                    Catalog regional biodiversity with extreme precision. Data sharded in this session aids conservation agencies in identifying quarantine hazards and migratory shifts.
-                  </p>
-                </section>
-
-                <section>
-                  <h4 className="text-[9px] uppercase font-bold tracking-widest text-amber-500/60 mb-3 font-mono border-b border-app-line pb-1 w-fit">Safety Protocols</h4>
-                  <ul className="space-y-4">
-                    <li className="flex gap-4 text-xs text-gray-400">
-                      <span className="text-emerald-500 font-mono font-bold shrink-0">[PR-01]</span>
-                      <span>Maintain safe distance from unidentified species. Do not disrupt local biomes.</span>
-                    </li>
-                    <li className="flex gap-4 text-xs text-gray-400">
-                      <span className="text-emerald-500 font-mono font-bold shrink-0">[PR-02]</span>
-                      <span>Rare species locations are obfuscated to prevent poaching and unauthorized tracking.</span>
-                    </li>
-                    <li className="flex gap-4 text-xs text-gray-400">
-                      <span className="text-emerald-500 font-mono font-bold shrink-0">[PR-03]</span>
-                      <span>Respect all regional exclusion zones and private territorial markers.</span>
-                    </li>
-                  </ul>
-                </section>
-
-                <button 
-                  onClick={() => setShowMissionBrief(false)}
-                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-app-bg font-bold tracking-[0.2em] uppercase text-[10px] transition-all rounded-sm mt-4 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
-                >
-                  Confirm Awareness & Initialize
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <header className="h-14 border-b border-app-line bg-app-surface flex items-center justify-between px-6 sticky top-0 z-40">
         <div className="flex items-center gap-8">
           <div className="flex items-center gap-3">
@@ -427,39 +241,22 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-6">
-          {user ? (
-            <div className="flex items-center gap-6">
-              <button
-                onClick={triggerCapture}
-                disabled={isAnalyzing}
-                className="hidden md:inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-app-bg font-bold uppercase text-[10px] tracking-widest rounded-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.15)]"
-                title="Capture specimen"
-              >
-                {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                Capture Specimen
-              </button>
-              <div className="flex flex-col items-end">
-                <span className="text-[10px] text-gray-400 uppercase tracking-widest leading-none mb-1">Field Operator</span>
-                <span className="text-xs font-mono leading-none">{user.displayName || 'Anonymous'}</span>
-                <span className="text-[8px] text-emerald-500/60 font-mono uppercase leading-none mt-1">ID: {user.uid.slice(0, 10)}</span>
-              </div>
-              <div className="h-8 w-px bg-app-line"></div>
-              <button
-                onClick={() => auth.signOut()}
-                className="p-2 hover:bg-red-500/10 rounded-full transition-colors group"
-                title="Deactivate Session"
-              >
-                <Activity className="w-5 h-5 text-gray-500 group-hover:text-red-500" />
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={handleLogin}
-              className="text-xs uppercase font-bold tracking-widest text-gray-400 hover:text-white transition-colors py-2 px-4 border border-app-line rounded hover:bg-white/5"
-            >
-              Sync Device
-            </button>
-          )}
+          <button
+            onClick={triggerCapture}
+            disabled={isAnalyzing || !user}
+            className="hidden md:inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-app-bg font-bold uppercase text-[10px] tracking-widest rounded-sm transition-all shadow-[0_0_20px_rgba(16,185,129,0.15)]"
+            title="Capture specimen"
+          >
+            {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+            Capture Specimen
+          </button>
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-gray-400 uppercase tracking-widest leading-none mb-1">Field Operator</span>
+            <span className="text-xs font-mono leading-none">{user?.displayName || 'Anonymous'}</span>
+            <span className="text-[8px] text-emerald-500/60 font-mono uppercase leading-none mt-1">
+              {user ? `ID: ${user.uid.slice(0, 10)}` : 'Connecting...'}
+            </span>
+          </div>
           <div className="hidden sm:flex items-center gap-2 text-[10px] bg-red-900/20 border border-red-500/30 px-3 py-1 rounded text-red-400 font-bold tracking-tighter">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
             18+ ENFORCED
