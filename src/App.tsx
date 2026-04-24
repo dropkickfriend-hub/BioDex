@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
 import { cn } from './lib/utils';
 import { CollectionEntry, FieldMission, Species } from './types';
+import MapView from './components/MapView';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -27,6 +28,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'intel' | 'dex' | 'community'>('intel');
   const user = DEMO_USER;
   const [selectedSpecies, setSelectedSpecies] = useState<CollectionEntry | null>(null);
+  const [selectedMission, setSelectedMission] = useState<FieldMission | null>(null);
   const [inventory, setInventory] = useState<CollectionEntry[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
@@ -239,149 +241,98 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="h-full flex flex-col lg:flex-row overflow-hidden"
             >
-              {/* Map View Section */}
-              <section className="flex-1 bg-app-void relative overflow-hidden group">
-                {/* Stylized Grid Map Background */}
-                <div className="absolute inset-0 pattern-grid opacity-20"></div>
-                <div className="absolute inset-0 bg-radial-at-center from-emerald-950/20 via-transparent to-transparent"></div>
-                
-                {/* Simulated Radar / Map UI */}
-                <div className="absolute top-6 left-6 space-y-4">
-                  <div className="bg-app-surface/60 backdrop-blur-md border border-app-line p-4 rounded-sm">
-                    <h3 className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-400 mb-3 flex items-center gap-2">
-                       <MapPin className="w-3 h-3 text-emerald-500" />
-                       Operator Coordinates
-                    </h3>
-                    {coords ? (
-                      <div className="space-y-1">
-                        <p className="text-xs font-mono text-emerald-400">LAT: {coords.lat.toFixed(6)}</p>
-                        <p className="text-xs font-mono text-emerald-400">LON: {coords.lng.toFixed(6)}</p>
-                      </div>
-                    ) : (
-                      <p className="text-xs font-mono text-amber-500 animate-pulse uppercase">Searching Sat_Link...</p>
-                    )}
-                  </div>
-
-                  <div className="bg-app-surface/60 backdrop-blur-md border border-app-line p-3 rounded-sm flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></div>
-                    <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-500">Mesh Sync: Active</span>
-                  </div>
-                </div>
-
-                {/* Map Markers (Simulated) */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                   {/* Center Point */}
-                   <div className="relative">
-                      <div className="w-4 h-4 bg-emerald-500/20 border border-emerald-500 rounded-full animate-pulse shadow-[0_0_20px_rgba(16,185,129,0.4)]"></div>
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 border border-emerald-500/10 rounded-full"></div>
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 border border-emerald-500/5 rounded-full"></div>
-                   </div>
-
-                   {/* Mission Hotspots */}
-                   {missions.map((mission, idx) => (
-                      <motion.div
-                        key={mission.id}
-                        initial={{ opacity: 0, scale: 0 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: 0.5 + idx * 0.2 }}
-                        className="absolute"
-                        style={{
-                          top: `${40 + (idx * 20)}%`,
-                          left: `${30 + (idx * 30)}%`
-                        }}
-                      >
-                         <div className="group relative">
-                            <div className={cn(
-                              "w-3 h-3 rounded-full animate-pulse",
-                              mission.priority === 'High' ? "bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.5)]"
-                            )}></div>
-                            <div className="absolute left-6 top-1/2 -translate-y-1/2 w-48 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
-                               <div className="bg-app-surface border border-app-line p-3 rounded shadow-2xl">
-                                  <p className="text-[9px] font-mono text-emerald-500 uppercase tracking-widest mb-1">{mission.category} // {mission.priority}</p>
-                                  <h4 className="text-xs font-bold text-white uppercase">{mission.title}</h4>
-                               </div>
-                            </div>
-                         </div>
-                      </motion.div>
-                   ))}
-                </div>
-
-                <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end">
-                   <div className="max-w-xs space-y-2">
-                      <h2 className="text-2xl font-serif italic text-white leading-tight">Sector Briefing</h2>
-                      <p className="text-[11px] text-gray-500 leading-relaxed uppercase tracking-wider font-mono">
-                         Algorithm has sharded local biodiversity gaps. Red pulses indicate priority field missions for regional scientific stabilization.
-                      </p>
-                   </div>
-                   <div className="flex gap-2">
-                      <button className="p-3 bg-app-surface border border-app-line rounded hover:bg-white/5 transition-all">
-                        <Layers className="w-5 h-5 text-gray-400" />
-                      </button>
-                      <button className="p-3 bg-app-surface border border-app-line rounded hover:bg-white/5 transition-all">
-                        <Navigation className="w-5 h-5 text-gray-400" />
-                      </button>
-                   </div>
-                </div>
+              {/* Real Map View */}
+              <section className="flex-1 bg-app-void relative overflow-hidden">
+                <MapView
+                  userCoords={coords}
+                  missions={missions}
+                  selectedMission={selectedMission}
+                  onMissionSelect={setSelectedMission}
+                />
               </section>
 
               {/* Mission Sidebar */}
               <aside className="w-full lg:w-96 bg-app-surface border-l border-app-line flex flex-col p-8 overflow-y-auto custom-scrollbar">
-                <header className="mb-8">
-                  <h3 className="text-[10px] font-mono uppercase tracking-[0.3em] text-gray-500 mb-6 border-b border-app-line pb-2">Mesh Directives</h3>
-                  <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded mb-4">
-                    <p className="text-[11px] text-emerald-500 leading-relaxed font-sans">
-                      <span className="font-bold block mb-1">LOCAL PROBLEM DETECTED:</span>
-                      Increasing reports of Invasive Emerald Ash Borer in your 5km radius. 
-                      Cataloging Fraxinus species is highly encouraged today.
-                    </p>
-                  </div>
-                </header>
-
-                <div className="space-y-4">
-                  <h4 className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-2">Available Missions</h4>
-                  {missions.map(mission => (
-                    <button 
-                      key={mission.id}
-                      className="w-full text-left p-4 bg-app-bg border border-app-line rounded hover:border-emerald-500 transition-all group"
-                    >
-                      <div className="flex items-center justify-between mb-3">
+                {selectedMission ? (
+                  <div className="space-y-6">
+                    <header>
+                      <div className="mb-4">
                         <span className={cn(
-                          "px-2 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em]",
-                          mission.priority === 'High' ? "bg-red-500/20 text-red-400 border border-red-400/20" : "bg-app-subtle text-gray-500 border border-app-line"
+                          "inline-block px-2 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em] mb-3",
+                          selectedMission.priority === 'High' ? "bg-red-500/20 text-red-400 border border-red-400/20" : "bg-app-subtle text-gray-500 border border-app-line"
                         )}>
-                          {mission.priority} Priority
+                          {selectedMission.priority} Priority · {selectedMission.category}
                         </span>
-                        <Target className="w-4 h-4 text-gray-500 group-hover:text-emerald-500 transition-colors" />
+                        <h2 className="text-xl font-bold text-white mb-2">{selectedMission.title}</h2>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-widest">{selectedMission.location.name}</p>
                       </div>
-                      <h4 className="text-xs font-bold text-white uppercase mb-1">{mission.title}</h4>
-                      <p className="text-[10px] text-gray-500 leading-relaxed line-clamp-2">{mission.description}</p>
-                      <div className="flex items-center gap-2 mt-3 text-[9px] font-mono text-emerald-500/60">
-                        <MapPin className="w-3 h-3" />
-                        {mission.location.name}
-                      </div>
-                    </button>
-                  ))}
-                  
-                  {missions.length === 0 && (
-                    <div className="text-center py-12 opacity-40">
-                      <Globe className="w-8 h-8 mx-auto mb-4 animate-spin-slow" />
-                      <p className="text-[10px] font-mono uppercase tracking-widest">Scanning local mesh...</p>
-                    </div>
-                  )}
-                </div>
+                    </header>
 
-                <div className="mt-auto pt-8 border-t border-app-line">
-                   <div className="text-center">
-                      <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest mb-4">Science Ledger Progress</p>
-                      <div className="h-1 bg-app-void rounded-full overflow-hidden mb-2">
-                        <div className="h-full w-2/3 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]"></div>
+                    <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded">
+                      <p className="text-[11px] text-gray-300 leading-relaxed">{selectedMission.description}</p>
+                    </div>
+
+                    {coords && (
+                      <div className="p-3 bg-app-bg border border-app-line rounded">
+                        <p className="text-[9px] font-mono uppercase text-gray-400 mb-2">Distance</p>
+                        <p className="text-lg font-bold text-emerald-400">
+                          {Math.round(Math.hypot(
+                            (selectedMission.location.lat - coords.lat) * 111.32,
+                            (selectedMission.location.lng - coords.lng) * 111.32 * Math.cos(coords.lat * Math.PI / 180)
+                          ) * 1000)} m
+                        </p>
                       </div>
-                      <div className="flex justify-between text-[8px] font-mono text-gray-600 uppercase tracking-widest">
-                        <span>Lvl 12 Technician</span>
-                        <span>840 / 1200 DP</span>
+                    )}
+
+                    <button
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-app-bg font-bold uppercase text-[10px] tracking-widest rounded transition-all"
+                      onClick={() => {}}
+                    >
+                      Navigate to Mission
+                    </button>
+
+                    <button
+                      onClick={() => setSelectedMission(null)}
+                      className="w-full py-2 text-gray-400 hover:text-white text-[10px] uppercase tracking-widest transition-colors"
+                    >
+                      Deselect
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <h3 className="text-[10px] font-mono uppercase tracking-[0.3em] text-gray-500">Available Missions</h3>
+                    {missions.map(mission => (
+                      <button
+                        key={mission.id}
+                        onClick={() => setSelectedMission(mission)}
+                        className="w-full text-left p-4 bg-app-bg border border-app-line rounded hover:border-emerald-500 transition-all group"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-sm text-[8px] font-bold uppercase tracking-[0.2em]",
+                            mission.priority === 'High' ? "bg-red-500/20 text-red-400 border border-red-400/20" : "bg-app-subtle text-gray-500 border border-app-line"
+                          )}>
+                            {mission.priority} Priority
+                          </span>
+                          <Target className="w-4 h-4 text-gray-500 group-hover:text-emerald-500 transition-colors" />
+                        </div>
+                        <h4 className="text-xs font-bold text-white uppercase mb-1">{mission.title}</h4>
+                        <p className="text-[10px] text-gray-500 leading-relaxed line-clamp-2">{mission.description}</p>
+                        <div className="flex items-center gap-2 mt-3 text-[9px] font-mono text-emerald-500/60">
+                          <MapPin className="w-3 h-3" />
+                          {mission.location.name}
+                        </div>
+                      </button>
+                    ))}
+
+                    {missions.length === 0 && (
+                      <div className="text-center py-12 opacity-40">
+                        <Globe className="w-8 h-8 mx-auto mb-4 animate-spin-slow" />
+                        <p className="text-[10px] font-mono uppercase tracking-widest">Scanning local mesh...</p>
                       </div>
-                   </div>
-                </div>
+                    )}
+                  </div>
+                )}
               </aside>
             </motion.div>
           )}
