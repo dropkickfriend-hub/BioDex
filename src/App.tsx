@@ -4,22 +4,15 @@ import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target,
 import { cn } from './lib/utils';
 import { CollectionEntry, FieldMission } from './types';
 import { identifySpecies } from './services/geminiService';
-import { auth, db, signInAnon, handleFirestoreError } from './services/firebase';
-import {
-  collection,
-  addDoc,
-  query,
-  where,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-  doc,
-} from 'firebase/firestore';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+
+const DEMO_USER = {
+  uid: 'demo-operator',
+  displayName: 'Demo Operator',
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'intel' | 'dex' | 'community'>('intel');
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const user = DEMO_USER;
   const [selectedSpecies, setSelectedSpecies] = useState<CollectionEntry | null>(null);
   const [inventory, setInventory] = useState<CollectionEntry[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -82,60 +75,21 @@ export default function App() {
     }
   }, [coords]);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (current) => {
-      if (current) {
-        setUser(current);
-      } else {
-        signInAnon().catch((error) => console.error('Anonymous sign-in failed:', error));
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!user) {
-      setInventory([]);
-      return;
-    }
-
-    // Real-time synchronization of specimen archive
-    const q = query(collection(db, 'observations'), where('userId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id
-      } as CollectionEntry));
-      setInventory(items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-    }, (error) => handleFirestoreError(error, 'list', 'observations'));
-
-    return () => unsubscribe();
-  }, [user]);
-
   const submitForReview = async () => {
-    if (!selectedSpecies || !user) return;
+    if (!selectedSpecies) return;
     setIsSubmittingReview(true);
-    try {
-      await setDoc(doc(db, 'observations', selectedSpecies.id), {
-        ...selectedSpecies,
-        reviewStatus: 'Submitted',
-        userObservations: userObservations,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      setIsSubmittingReview(false);
-      setSelectedSpecies(prev => prev ? { ...prev, reviewStatus: 'Submitted', userObservations } : null);
-      setUserObservations('');
-    } catch (error) {
-      handleFirestoreError(error, 'update', `observations/${selectedSpecies.id}`);
-      setIsSubmittingReview(false);
-    }
+    const updated: CollectionEntry = { ...selectedSpecies, reviewStatus: 'Submitted', userObservations };
+    setInventory(prev => prev.map(item => item.id === updated.id ? updated : item));
+    setSelectedSpecies(updated);
+    setUserObservations('');
+    setIsSubmittingReview(false);
   };
 
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || !user) return;
+    if (!file) return;
 
     setUploadError(null);
 
@@ -165,7 +119,8 @@ export default function App() {
 
       const identified = await identifySpecies(base64);
 
-      const newRecord: Partial<CollectionEntry> = {
+      const newRecord: CollectionEntry = {
+        id: crypto.randomUUID(),
         species: identified,
         userId: user.uid,
         timestamp: new Date().toISOString(),
@@ -174,12 +129,11 @@ export default function App() {
           lat: coords.lat,
           lng: coords.lng,
           areaName: 'Current Sector'
-        } : undefined
-      };
+        } : undefined,
+      } as CollectionEntry;
 
-      const docRef = await addDoc(collection(db, 'observations'), newRecord);
-
-      setSelectedSpecies({ ...newRecord, id: docRef.id } as CollectionEntry);
+      setInventory(prev => [newRecord, ...prev]);
+      setSelectedSpecies(newRecord);
       setActiveTab('dex');
     } catch (error) {
       console.error("Identification failed:", error);
