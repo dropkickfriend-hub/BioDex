@@ -6,10 +6,8 @@ import { CollectionEntry, FieldMission, Species } from './types';
 import MapView from './components/MapView';
 import { fetchSpeciesNearLocation } from './services/gbifService';
 import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
-import { getThreatForMission, simulateThreat, KNOWN_THREATS } from './services/threatSimulation';
+import { getThreatForMission, simulateThreat } from './services/threatSimulation';
 import ThreatSimulationView from './components/ThreatSimulationView';
-import { planRestoration } from './services/restorationPlanner';
-import RestorationPlanView from './components/RestorationPlanView';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -45,10 +43,6 @@ export default function App() {
   const [missionSoilData, setMissionSoilData] = useState<{ [key: string]: SoilData[] }>({});
   const [missionSpecies, setMissionSpecies] = useState<{ [key: string]: Species[] }>({});
   const [isLoadingData, setIsLoadingData] = useState(false);
-  const [manualLat, setManualLat] = useState('');
-  const [manualLng, setManualLng] = useState('');
-  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
-  const watchIdRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
@@ -57,40 +51,14 @@ export default function App() {
     fileInputRef.current?.click();
   };
 
-  const handleSetManualLocation = () => {
-    const lat = parseFloat(manualLat);
-    const lng = parseFloat(manualLng);
-    if (!isNaN(lat) && !isNaN(lng)) {
-      setCoords({ lat, lng });
-      setManualLat('');
-      setManualLng('');
-    }
-  };
-
   useEffect(() => {
     if ("geolocation" in navigator) {
-      const handlePosition = (position: GeolocationPosition) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        setCoords({ lat: latitude, lng: longitude });
-        setGpsAccuracy(accuracy);
-      };
-
-      const handleError = (err: GeolocationPositionError) => {
-        console.warn('GPS error:', err.message);
-        setGpsAccuracy(-1);
-      };
-
-      watchIdRef.current = navigator.geolocation.watchPosition(
-        handlePosition,
-        handleError,
-        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
-      );
-
-      return () => {
-        if (watchIdRef.current !== null) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-        }
-      };
+      navigator.geolocation.getCurrentPosition((position) => {
+        setCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+      });
     }
   }, []);
 
@@ -386,21 +354,10 @@ export default function App() {
                         )}
 
                         {(() => {
-                          try {
-                            const threat = getThreatForMission(selectedMission.category, selectedMission.title);
-                            if (!threat) return null;
-                            const simulation = simulateThreat(threat, missionSoilData[selectedMission.id] || []);
-                            const plan = planRestoration(threat, simulation.soilSuitability);
-                            return (
-                              <>
-                                <ThreatSimulationView simulation={simulation} />
-                                <RestorationPlanView plan={plan} />
-                              </>
-                            );
-                          } catch (err) {
-                            console.error('Error loading threat/restoration data:', err);
-                            return null;
-                          }
+                          const threat = getThreatForMission(selectedMission.category, selectedMission.title);
+                          if (!threat) return null;
+                          const simulation = simulateThreat(threat, missionSoilData[selectedMission.id] || []);
+                          return <ThreatSimulationView simulation={simulation} />;
                         })()}
                       </>
                     )}
@@ -421,36 +378,6 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="p-3 bg-app-bg border border-app-line rounded">
-                      <p className="text-[9px] font-mono uppercase text-gray-500 mb-2">Manual Location Override</p>
-                      <div className="flex gap-2 mb-2">
-                        <input
-                          type="number"
-                          placeholder="Lat"
-                          value={manualLat}
-                          onChange={(e) => setManualLat(e.target.value)}
-                          className="flex-1 text-[9px] px-2 py-1 bg-app-subtle border border-app-line rounded text-white placeholder:text-gray-700 focus:outline-none focus:border-emerald-500"
-                          step="0.0001"
-                        />
-                        <input
-                          type="number"
-                          placeholder="Lng"
-                          value={manualLng}
-                          onChange={(e) => setManualLng(e.target.value)}
-                          className="flex-1 text-[9px] px-2 py-1 bg-app-subtle border border-app-line rounded text-white placeholder:text-gray-700 focus:outline-none focus:border-emerald-500"
-                          step="0.0001"
-                        />
-                      </div>
-                      <button
-                        onClick={handleSetManualLocation}
-                        className="w-full text-[9px] px-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-app-bg font-bold uppercase rounded transition-all"
-                      >
-                        Set Location
-                      </button>
-                      {coords && (
-                        <p className="text-[8px] text-gray-500 mt-2">Current: {coords.lat.toFixed(4)}, {coords.lng.toFixed(4)}</p>
-                      )}
-                    </div>
                     <h3 className="text-[10px] font-mono uppercase tracking-[0.3em] text-gray-500">Available Missions</h3>
                     {missions.map(mission => (
                       <button
@@ -933,9 +860,7 @@ export default function App() {
             SYS_CONNECTED
           </span>
           <span className="hidden sm:inline">LOC: ENCRYPTED_MESH</span>
-          <span className="hidden sm:inline">
-            GPS: {gpsAccuracy === null ? 'ACQUIRING' : gpsAccuracy === -1 ? 'ERROR' : gpsAccuracy < 100 ? `LOCK ±${Math.round(gpsAccuracy)}m` : gpsAccuracy < 1000 ? `±${Math.round(gpsAccuracy)}m` : `±${(gpsAccuracy / 1000).toFixed(1)}km`}
-          </span>
+          <span className="hidden sm:inline">GPS: ACTIVE_LOCK</span>
         </div>
         <div className="text-right uppercase tracking-tighter opacity-70">
           Safety Protocol Delta-9 // 18+ Access Enforced
