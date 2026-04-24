@@ -4,10 +4,23 @@ import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target,
 import { cn } from './lib/utils';
 import { CollectionEntry, FieldMission, Species } from './types';
 import MapView from './components/MapView';
-import { fetchSpeciesNearLocation } from './services/gbifService';
+import TargetDex from './components/TargetDex';
+import {
+  fetchSpeciesNearLocation,
+  fetchRegionalTargets,
+  fetchInvasiveSpeciesForCountry,
+  fetchThreatenedSpeciesForCountry,
+  fetchHabitatRatios,
+  TargetSpecies,
+  RegionalThreat,
+  HabitatRatios,
+} from './services/gbifService';
 import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
 import { getThreatForMission, simulateThreat } from './services/threatSimulation';
 import ThreatSimulationView from './components/ThreatSimulationView';
+import { useGeolocation } from './hooks/useGeolocation';
+import { reverseGeocode, RegionContext } from './services/regionService';
+import { generateLocalMissions } from './services/missionGenerator';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -29,13 +42,14 @@ const getMockSpecies = (imageUrl: string): Species => ({
 });
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'intel' | 'dex' | 'community'>('intel');
+  const [activeTab, setActiveTab] = useState<'intel' | 'targets' | 'dex' | 'community'>('intel');
   const user = DEMO_USER;
   const [selectedSpecies, setSelectedSpecies] = useState<CollectionEntry | null>(null);
   const [selectedMission, setSelectedMission] = useState<FieldMission | null>(null);
   const [inventory, setInventory] = useState<CollectionEntry[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [coords, setCoords] = useState<{ lat: number, lng: number } | null>(null);
+  const geo = useGeolocation();
+  const coords = geo.coords;
   const [missions, setMissions] = useState<FieldMission[]>([]);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [userObservations, setUserObservations] = useState('');
@@ -43,6 +57,13 @@ export default function App() {
   const [missionSoilData, setMissionSoilData] = useState<{ [key: string]: SoilData[] }>({});
   const [missionSpecies, setMissionSpecies] = useState<{ [key: string]: Species[] }>({});
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [region, setRegion] = useState<RegionContext | null>(null);
+  const [targets, setTargets] = useState<TargetSpecies[]>([]);
+  const [invasives, setInvasives] = useState<RegionalThreat[]>([]);
+  const [endangered, setEndangered] = useState<RegionalThreat[]>([]);
+  const [habitatRatios, setHabitatRatios] = useState<HabitatRatios | null>(null);
+  const [isLoadingTargets, setIsLoadingTargets] = useState(false);
+  const [showLandCover, setShowLandCover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
@@ -51,77 +72,98 @@ export default function App() {
     fileInputRef.current?.click();
   };
 
+  // Resolve region context + regional biodiversity data once we have coords.
   useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        setCoords({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        });
-      });
-    }
-  }, []);
+    if (!coords) return;
+    let cancelled = false;
 
-  useEffect(() => {
-    if (coords) {
-      // Mock missions based on user location
-      const mockMissions: FieldMission[] = [
-        {
-          id: 'm1',
-          title: 'Invasive Pattern Detection',
-          description: 'Spotted Lanternfly egg masses reported in your sector. Immediate confirmation required.',
-          priority: 'High',
-          category: 'Invasive',
-          location: {
-            lat: coords.lat + 0.002,
-            lng: coords.lng - 0.001,
-            radius: 200,
-            name: 'North Sector Grid-4'
-          }
-        },
-        {
-          id: 'm2',
-          title: 'Endangered Flora Survey',
-          description: 'Historical records indicate rare Orchidaceae sightings here. Document current population.',
-          priority: 'Medium',
-          category: 'Endangered',
-          location: {
-            lat: coords.lat - 0.003,
-            lng: coords.lng + 0.004,
-            radius: 500,
-            name: 'Riverbank Preserve'
-          }
-        }
-      ];
-      setMissions(mockMissions);
+    (async () => {
+      setIsLoadingTargets(true);
+      const ctx = await reverseGeocode(coords.lat, coords.lng);
+      if (cancelled) return;
+      setRegion(ctx);
 
-      // Fetch soil and species data for missions
-      setIsLoadingData(true);
-      const fetchMissionData = async () => {
-        const soilDataMap: { [key: string]: SoilData[] } = {};
-        const speciesMap: { [key: string]: Species[] } = {};
+      const [targetList, ratios] = await Promise.all([
+        fetchRegionalTargets(coords.lat, coords.lng, 25, 10),
+        fetchHabitatRatios(coords.lat, coords.lng, 10),
+      ]);
+      if (cancelled) return;
+      setTargets(targetList);
+      setHabitatRatios(ratios);
 
-        for (const mission of mockMissions) {
-          try {
-            const [soil, species] = await Promise.all([
-              fetchSoilData(mission.location.lat, mission.location.lng),
-              fetchSpeciesNearLocation(mission.location.lat, mission.location.lng, 5, 15)
-            ]);
-            soilDataMap[mission.id] = soil;
-            speciesMap[mission.id] = species;
-          } catch (error) {
-            console.error(`Failed to fetch data for mission ${mission.id}:`, error);
-          }
-        }
+      if (ctx?.countryCode) {
+        const [inv, end] = await Promise.all([
+          fetchInvasiveSpeciesForCountry(ctx.countryCode, 6),
+          fetchThreatenedSpeciesForCountry(ctx.countryCode, 6),
+        ]);
+        if (cancelled) return;
+        setInvasives(inv);
+        setEndangered(end);
+      }
+      setIsLoadingTargets(false);
+    })();
 
-        setMissionSoilData(soilDataMap);
-        setMissionSpecies(speciesMap);
-        setIsLoadingData(false);
-      };
-
-      fetchMissionData();
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [coords]);
+
+  // Build missions from real regional threat/endangered lists, falling back to
+  // generic survey missions if the API returned nothing (e.g. offline or rate-limited).
+  useEffect(() => {
+    if (!coords) return;
+    const generated = generateLocalMissions(coords, invasives, endangered);
+    const fallback: FieldMission[] =
+      generated.length > 0
+        ? []
+        : [
+            {
+              id: 'scout',
+              title: 'Baseline Biodiversity Scout',
+              description: 'Walk your sector and capture any flora, fauna, or fungi you encounter. Every capture improves the local model.',
+              priority: 'Medium',
+              category: 'Impact',
+              location: {
+                lat: coords.lat + 0.004,
+                lng: coords.lng + 0.002,
+                radius: 400,
+                name: 'Local Sector',
+              },
+            },
+          ];
+    setMissions([...generated, ...fallback]);
+  }, [coords, invasives, endangered]);
+
+  // Fetch soil / nearby species for each mission.
+  useEffect(() => {
+    if (missions.length === 0) return;
+    let cancelled = false;
+    setIsLoadingData(true);
+    (async () => {
+      const soilDataMap: { [key: string]: SoilData[] } = {};
+      const speciesMap: { [key: string]: Species[] } = {};
+      for (const mission of missions) {
+        try {
+          const [soil, species] = await Promise.all([
+            fetchSoilData(mission.location.lat, mission.location.lng),
+            fetchSpeciesNearLocation(mission.location.lat, mission.location.lng, 5, 15),
+          ]);
+          if (cancelled) return;
+          soilDataMap[mission.id] = soil;
+          speciesMap[mission.id] = species;
+        } catch (error) {
+          console.error(`Failed to fetch data for mission ${mission.id}:`, error);
+        }
+      }
+      if (cancelled) return;
+      setMissionSoilData(soilDataMap);
+      setMissionSpecies(speciesMap);
+      setIsLoadingData(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [missions]);
 
   const submitForReview = async () => {
     if (!selectedSpecies) return;
@@ -210,7 +252,7 @@ export default function App() {
           </div>
 
           <nav className="hidden lg:flex items-center gap-1">
-            <button 
+            <button
               onClick={() => setActiveTab('intel')}
               className={cn(
                 "px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 hover:bg-white/5",
@@ -219,7 +261,16 @@ export default function App() {
             >
               Field Intel
             </button>
-            <button 
+            <button
+              onClick={() => setActiveTab('targets')}
+              className={cn(
+                "px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 hover:bg-white/5",
+                activeTab === 'targets' ? "text-emerald-500 border-emerald-500" : "text-gray-500 border-transparent hover:text-white"
+              )}
+            >
+              Field Targets
+            </button>
+            <button
               onClick={() => setActiveTab('dex')}
               className={cn(
                 "px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 hover:bg-white/5",
@@ -228,7 +279,7 @@ export default function App() {
             >
               Specimen Archive
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('community')}
               className={cn(
                 "px-4 py-1 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 hover:bg-white/5",
@@ -281,7 +332,95 @@ export default function App() {
                   missions={missions}
                   selectedMission={selectedMission}
                   onMissionSelect={setSelectedMission}
+                  showLandCover={showLandCover}
+                  scanRadiusKm={10}
                 />
+
+                {/* Location status banner */}
+                {geo.status !== 'located' && (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] max-w-md w-[calc(100%-2rem)]">
+                    <div className="bg-app-surface/95 backdrop-blur border border-emerald-500/30 rounded-sm p-4 shadow-2xl flex items-start gap-3">
+                      {geo.status === 'prompting' ? (
+                        <Loader2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5 animate-spin" />
+                      ) : (
+                        <Navigation className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] font-mono uppercase tracking-widest text-emerald-500 mb-1">
+                          {geo.status === 'prompting' && 'Acquiring GPS lock...'}
+                          {geo.status === 'denied' && 'Location permission blocked'}
+                          {geo.status === 'unsupported' && 'Geolocation unsupported'}
+                          {geo.status === 'error' && 'Location unavailable'}
+                          {geo.status === 'idle' && 'Location not requested'}
+                        </p>
+                        <p className="text-[11px] text-gray-300 leading-relaxed">
+                          {geo.status === 'denied'
+                            ? 'Enable location in your browser to see local missions, invasives, and species targets.'
+                            : geo.error || 'Grant precise location to populate this sector with real regional data.'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={geo.requestPrecise}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-app-bg font-bold uppercase text-[10px] tracking-widest rounded-sm transition-all whitespace-nowrap"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Approximate-source notice */}
+                {geo.status === 'located' && geo.source !== 'gps' && (
+                  <div className="absolute top-4 left-4 z-[500] bg-app-surface/90 backdrop-blur border border-amber-500/30 rounded-sm px-3 py-1.5 text-[10px] font-mono uppercase text-amber-400">
+                    {geo.source === 'ip' ? 'IP-approximate location' : 'Manual location'}
+                    <button
+                      onClick={geo.requestPrecise}
+                      className="ml-2 text-emerald-400 hover:text-emerald-300 underline"
+                    >
+                      use GPS
+                    </button>
+                  </div>
+                )}
+
+                {/* Map layer controls */}
+                <div className="absolute bottom-4 right-4 z-[500] flex flex-col gap-2">
+                  <button
+                    onClick={() => setShowLandCover(v => !v)}
+                    className={cn(
+                      'inline-flex items-center gap-2 px-3 py-2 rounded-sm border text-[10px] font-bold uppercase tracking-widest transition-all backdrop-blur',
+                      showLandCover
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'bg-app-surface/90 border-app-line text-gray-300 hover:text-white'
+                    )}
+                    title="Toggle ESA WorldCover 2021 habitat classes"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    Land Cover
+                  </button>
+                </div>
+
+                {/* Region + habitat ratios card */}
+                {region && habitatRatios && (
+                  <div className="absolute bottom-4 left-4 z-[500] max-w-xs bg-app-surface/90 backdrop-blur border border-app-line rounded-sm p-3">
+                    <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">Bioregion</p>
+                    <p className="text-xs font-bold text-white mb-2">{region.displayName}</p>
+                    <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">
+                      Habitat ratios (n={habitatRatios.totalOccurrences.toLocaleString()})
+                    </p>
+                    <div className="flex h-2 rounded-sm overflow-hidden">
+                      <div className="bg-emerald-500" style={{ width: `${habitatRatios.flora * 100}%` }} title={`Flora ${(habitatRatios.flora * 100).toFixed(0)}%`} />
+                      <div className="bg-amber-500" style={{ width: `${habitatRatios.fauna * 100}%` }} title={`Fauna ${(habitatRatios.fauna * 100).toFixed(0)}%`} />
+                      <div className="bg-blue-500" style={{ width: `${habitatRatios.fungi * 100}%` }} title={`Fungi ${(habitatRatios.fungi * 100).toFixed(0)}%`} />
+                      <div className="bg-purple-500" style={{ width: `${habitatRatios.invertebrates * 100}%` }} title={`Other ${(habitatRatios.invertebrates * 100).toFixed(0)}%`} />
+                    </div>
+                    <div className="flex justify-between mt-1 text-[8px] font-mono text-gray-500">
+                      <span>🌿 {(habitatRatios.flora * 100).toFixed(0)}%</span>
+                      <span>🐾 {(habitatRatios.fauna * 100).toFixed(0)}%</span>
+                      <span>🍄 {(habitatRatios.fungi * 100).toFixed(0)}%</span>
+                      <span>🦠 {(habitatRatios.invertebrates * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+                )}
               </section>
 
               {/* Mission Sidebar */}
@@ -412,6 +551,24 @@ export default function App() {
                   </div>
                 )}
               </aside>
+            </motion.div>
+          )}
+
+          {activeTab === 'targets' && (
+            <motion.div
+              key="targets"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="h-full overflow-hidden"
+            >
+              <TargetDex
+                targets={targets}
+                inventory={inventory}
+                isLoading={isLoadingTargets}
+                regionLabel={region?.displayName || ''}
+                onCapture={triggerCapture}
+              />
             </motion.div>
           )}
 
@@ -881,7 +1038,18 @@ export default function App() {
             <span className="text-[8px] uppercase font-bold tracking-[0.2em]">Intel</span>
           </button>
 
-          <button 
+          <button
+            onClick={() => setActiveTab('targets')}
+            className={cn(
+              "flex flex-col items-center gap-1 transition-all",
+              activeTab === 'targets' ? "text-emerald-500" : "text-gray-500 hover:text-white"
+            )}
+          >
+            <Target className="w-5 h-5 border-transparent transition-all" />
+            <span className="text-[8px] uppercase font-bold tracking-[0.2em]">Targets</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('dex')}
             className={cn(
               "flex flex-col items-center gap-1 transition-all",

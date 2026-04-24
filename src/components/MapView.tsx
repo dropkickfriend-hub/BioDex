@@ -7,6 +7,8 @@ interface MapViewProps {
   missions: FieldMission[];
   selectedMission: FieldMission | null;
   onMissionSelect: (mission: FieldMission) => void;
+  showLandCover?: boolean;
+  scanRadiusKm?: number;
 }
 
 const userIcon = L.icon({
@@ -23,10 +25,24 @@ const missionIcon = (priority: string) =>
     popupAnchor: [0, -40],
   });
 
-export default function MapView({ userCoords, missions, selectedMission, onMissionSelect }: MapViewProps) {
+// ESA WorldCover 2021 via a free ArcGIS tile service. Coarse habitat classes
+// (forest / cropland / grassland / urban / water / wetland).
+const LAND_COVER_URL =
+  'https://services.terrascope.be/wmts/v2?layer=WORLDCOVER_2021_MAP&style=default&tilematrixset=EPSG%3A3857&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fpng&TileMatrix={z}&TileCol={x}&TileRow={y}';
+
+export default function MapView({
+  userCoords,
+  missions,
+  selectedMission,
+  onMissionSelect,
+  showLandCover = false,
+  scanRadiusKm = 10,
+}: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const scanCircleRef = useRef<L.Circle | null>(null);
+  const landCoverRef = useRef<L.TileLayer | null>(null);
   const missionMarkersRef = useRef<{ [key: string]: L.Marker }>({});
 
   // Initialize map once
@@ -35,12 +51,40 @@ export default function MapView({ userCoords, missions, selectedMission, onMissi
 
     const map = L.map(mapRef.current).setView([20, 0], 2);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+      attribution: '&copy; OpenStreetMap · ESA WorldCover',
       maxZoom: 19,
     }).addTo(map);
 
     mapInstanceRef.current = map;
+
+    // Leaflet doesn't auto-recalculate size if its container was hidden or
+    // resized after mount. Re-invalidate once the DOM settles.
+    const t = setTimeout(() => map.invalidateSize(), 50);
+    const onResize = () => map.invalidateSize();
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('resize', onResize);
+    };
   }, []);
+
+  // Land-cover overlay toggle
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    if (showLandCover) {
+      if (!landCoverRef.current) {
+        landCoverRef.current = L.tileLayer(LAND_COVER_URL, {
+          opacity: 0.55,
+          attribution: '&copy; ESA WorldCover 2021',
+          maxZoom: 18,
+        });
+      }
+      landCoverRef.current.addTo(mapInstanceRef.current);
+    } else if (landCoverRef.current) {
+      mapInstanceRef.current.removeLayer(landCoverRef.current);
+    }
+  }, [showLandCover]);
 
   // Update user marker and map view when userCoords changes
   useEffect(() => {
@@ -50,12 +94,27 @@ export default function MapView({ userCoords, missions, selectedMission, onMissi
       userMarkerRef.current.setLatLng([userCoords.lat, userCoords.lng]);
     } else {
       userMarkerRef.current = L.marker([userCoords.lat, userCoords.lng], { icon: userIcon })
-        .bindPopup('Your location')
+        .bindPopup('You are here')
         .addTo(mapInstanceRef.current);
     }
 
+    if (scanCircleRef.current) {
+      scanCircleRef.current.setLatLng([userCoords.lat, userCoords.lng]);
+      scanCircleRef.current.setRadius(scanRadiusKm * 1000);
+    } else {
+      scanCircleRef.current = L.circle([userCoords.lat, userCoords.lng], {
+        radius: scanRadiusKm * 1000,
+        color: '#10b981',
+        weight: 1,
+        opacity: 0.45,
+        fillColor: '#10b981',
+        fillOpacity: 0.05,
+      }).addTo(mapInstanceRef.current);
+    }
+
     mapInstanceRef.current.setView([userCoords.lat, userCoords.lng], 13);
-  }, [userCoords]);
+    setTimeout(() => mapInstanceRef.current?.invalidateSize(), 60);
+  }, [userCoords, scanRadiusKm]);
 
   // Update mission markers
   useEffect(() => {
@@ -64,7 +123,6 @@ export default function MapView({ userCoords, missions, selectedMission, onMissi
     const currentMissionIds = new Set(missions.map(m => m.id));
     const existingMissionIds = new Set(Object.keys(missionMarkersRef.current));
 
-    // Remove markers for missions no longer in the list
     existingMissionIds.forEach(id => {
       if (!currentMissionIds.has(id)) {
         mapInstanceRef.current!.removeLayer(missionMarkersRef.current[id]);
@@ -72,7 +130,6 @@ export default function MapView({ userCoords, missions, selectedMission, onMissi
       }
     });
 
-    // Add or update mission markers
     missions.forEach(mission => {
       if (missionMarkersRef.current[mission.id]) {
         missionMarkersRef.current[mission.id].setLatLng([mission.location.lat, mission.location.lng]);
