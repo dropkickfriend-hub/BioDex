@@ -318,6 +318,16 @@ export interface HabitatRatios {
   totalOccurrences: number;
 }
 
+// Cheap native-density proxy from the existing ratios. Combines plant + fungi
+// share with a log-scaled occurrence count so sparsely surveyed or
+// fauna-dominated areas score lower. Returns 0..1.
+export function estimateNativeDensity(r: HabitatRatios | null): number {
+  if (!r || r.totalOccurrences === 0) return 0.5;
+  const plantShare = r.flora + r.fungi;
+  const survey = Math.min(1, Math.log10(r.totalOccurrences + 1) / 3.5);
+  return Math.max(0.1, Math.min(1, plantShare * 0.6 + survey * 0.4));
+}
+
 export async function fetchHabitatRatios(
   lat: number,
   lng: number,

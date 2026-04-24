@@ -1,10 +1,12 @@
-import { SimulationResult } from '../services/threatSimulation';
+import { CounterStrategy, SimulationResult } from '../services/threatSimulation';
 
 interface ThreatSimulationViewProps {
   simulation: SimulationResult;
+  onStrategyChange?: (strategy: CounterStrategy) => void;
+  nativeDensity?: number;
 }
 
-export default function ThreatSimulationView({ simulation }: ThreatSimulationViewProps) {
+export default function ThreatSimulationView({ simulation, onStrategyChange, nativeDensity }: ThreatSimulationViewProps) {
   const { threat, baseline, withIntervention, recommendedStrategy, soilSuitability } = simulation;
   const maxYear = baseline[baseline.length - 1].year;
 
@@ -44,6 +46,12 @@ export default function ThreatSimulationView({ simulation }: ThreatSimulationVie
           <p className={`text-xs font-bold ${soilSuitability > 0.7 ? 'text-red-400' : soilSuitability > 0.4 ? 'text-amber-400' : 'text-emerald-400'}`}>
             {Math.round(soilSuitability * 100)}%
           </p>
+          {nativeDensity !== undefined && (
+            <>
+              <p className="text-[8px] font-mono uppercase text-gray-500 mt-1">Native Density</p>
+              <p className="text-xs font-bold text-emerald-400">{Math.round(nativeDensity * 100)}%</p>
+            </>
+          )}
         </div>
       </div>
 
@@ -95,7 +103,23 @@ export default function ThreatSimulationView({ simulation }: ThreatSimulationVie
       </div>
 
       <div className="p-2 bg-emerald-500/5 border border-emerald-500/20 rounded">
-        <p className="text-[9px] font-mono uppercase text-emerald-500 mb-1">Recommended Counter-Strategy</p>
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <p className="text-[9px] font-mono uppercase text-emerald-500">Counter-Strategy Testbed</p>
+          {threat.counterStrategies.length > 1 && onStrategyChange && (
+            <select
+              value={recommendedStrategy.name}
+              onChange={(e) => {
+                const next = threat.counterStrategies.find(s => s.name === e.target.value);
+                if (next) onStrategyChange(next);
+              }}
+              className="bg-app-bg border border-app-line text-[9px] text-emerald-300 rounded-sm px-2 py-0.5 font-mono uppercase tracking-wider focus:outline-none focus:border-emerald-500"
+            >
+              {threat.counterStrategies.map(s => (
+                <option key={s.name} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
         <p className="text-xs font-bold text-white">{recommendedStrategy.name}</p>
         <p className="text-[9px] italic text-gray-400 mb-1">{recommendedStrategy.scientificName}</p>
         <p className="text-[9px] text-gray-300 leading-relaxed mb-2">{recommendedStrategy.mechanism}</p>

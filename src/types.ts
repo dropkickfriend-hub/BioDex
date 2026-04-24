@@ -28,6 +28,17 @@ export interface CollectionEntry {
   reviewStatus: ReviewStatus;
   userObservations?: string;
   reviewerNotes?: string;
+  // Gameplay: user can claim that this capture matches a specific regional
+  // target / mission target species. Drives mission progress + XP.
+  claimedScientificName?: string;
+  claimedMissionId?: string;
+}
+
+export interface PlayerStats {
+  xp: number;
+  captures: number;
+  targetsCaught: number;
+  missionsAdvanced: number;
 }
 
 export interface FieldMission {

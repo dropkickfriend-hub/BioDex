@@ -172,15 +172,32 @@ function inRangeScore(value: number, range: [number, number]): number {
   return Math.max(0, 1 - distance / (width * 2));
 }
 
+export interface SimulateOptions {
+  years?: number;
+  initialCoverage?: number;
+  strategy?: CounterStrategy;
+  nativeBiomassFactor?: number; // 0..1 multiplier from measured native density
+}
+
 export function simulateThreat(
   threat: ThreatProfile,
   soil: SoilData[],
-  years: number = 100,
-  initialCoverage: number = 0.05
+  optsOrYears: SimulateOptions | number = {},
+  legacyInitialCoverage?: number
 ): SimulationResult {
+  // Support both the legacy (years, initialCoverage) and new options-object calls.
+  const opts: SimulateOptions =
+    typeof optsOrYears === 'number'
+      ? { years: optsOrYears, initialCoverage: legacyInitialCoverage }
+      : optsOrYears;
+  const years = opts.years ?? 100;
+  const initialCoverage = opts.initialCoverage ?? 0.05;
+  const nativeFactor = Math.max(0, Math.min(1, opts.nativeBiomassFactor ?? 1));
+
   const soilSuitability = calculateSoilSuitability(threat, soil);
   const effectiveGrowthRate = threat.baseGrowthRate * soilSuitability;
-  const carryingCapacity = Math.min(0.95, 0.4 + soilSuitability * 0.55);
+  // Carrying capacity shrinks when native community is healthy (biotic resistance).
+  const carryingCapacity = Math.min(0.95, (0.4 + soilSuitability * 0.55) * (1 - 0.3 * nativeFactor));
 
   const baseline: SimulationPoint[] = [];
   for (let year = 0; year <= years; year += 5) {
@@ -193,15 +210,17 @@ export function simulateThreat(
     baseline.push({
       year,
       invaderCoverage,
-      nativeBiomass: Math.max(0, 1 - invaderCoverage * threat.impactPerUnit),
+      nativeBiomass: Math.max(0, nativeFactor - invaderCoverage * threat.impactPerUnit),
       spreadRadiusKm: Math.min(500, threat.dispersalKmPerYear * year * soilSuitability),
       affectedSpecies: Math.round(invaderCoverage * 50),
     });
   }
 
-  const strategy = threat.counterStrategies
-    .slice()
-    .sort((a, b) => b.effectiveness / b.establishmentYears - a.effectiveness / a.establishmentYears)[0];
+  const strategy =
+    opts.strategy ??
+    threat.counterStrategies
+      .slice()
+      .sort((a, b) => b.effectiveness / b.establishmentYears - a.effectiveness / a.establishmentYears)[0];
 
   const interventionYear = 2;
   const withIntervention: SimulationPoint[] = [];
@@ -230,7 +249,7 @@ export function simulateThreat(
     withIntervention.push({
       year,
       invaderCoverage,
-      nativeBiomass: Math.max(0, 1 - invaderCoverage * threat.impactPerUnit),
+      nativeBiomass: Math.max(0, nativeFactor - invaderCoverage * threat.impactPerUnit),
       spreadRadiusKm: Math.min(500, threat.dispersalKmPerYear * year * soilSuitability * (1 - strategy.effectiveness * 0.5)),
       affectedSpecies: Math.round(invaderCoverage * 50),
     });

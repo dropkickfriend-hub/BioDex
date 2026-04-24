@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
 import { cn } from './lib/utils';
-import { CollectionEntry, FieldMission, Species } from './types';
+import { CollectionEntry, FieldMission, PlayerStats, Species } from './types';
 import MapView from './components/MapView';
 import TargetDex from './components/TargetDex';
 import {
@@ -11,16 +11,18 @@ import {
   fetchInvasiveSpeciesForCountry,
   fetchThreatenedSpeciesForCountry,
   fetchHabitatRatios,
+  estimateNativeDensity,
   TargetSpecies,
   RegionalThreat,
   HabitatRatios,
 } from './services/gbifService';
 import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
-import { getThreatForMission, simulateThreat } from './services/threatSimulation';
+import { CounterStrategy, getThreatForMission, simulateThreat } from './services/threatSimulation';
 import ThreatSimulationView from './components/ThreatSimulationView';
 import { useGeolocation } from './hooks/useGeolocation';
 import { reverseGeocode, RegionContext } from './services/regionService';
 import { generateLocalMissions } from './services/missionGenerator';
+import { getJurisdiction } from './services/jurisdictionService';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -64,7 +66,11 @@ export default function App() {
   const [habitatRatios, setHabitatRatios] = useState<HabitatRatios | null>(null);
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
   const [showLandCover, setShowLandCover] = useState(false);
+  const [missionStrategy, setMissionStrategy] = useState<Record<string, CounterStrategy>>({});
+  const [stats, setStats] = useState<PlayerStats>({ xp: 0, captures: 0, targetsCaught: 0, missionsAdvanced: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jurisdiction = getJurisdiction(region?.countryCode);
+  const nativeDensity = estimateNativeDensity(habitatRatios);
 
   const triggerCapture = () => {
     if (!user) return;
@@ -175,6 +181,33 @@ export default function App() {
     setIsSubmittingReview(false);
   };
 
+  const claimCapture = (target: TargetSpecies, missionId?: string) => {
+    if (!selectedSpecies) return;
+    const alreadyClaimed = !!selectedSpecies.claimedScientificName;
+    const updated: CollectionEntry = {
+      ...selectedSpecies,
+      claimedScientificName: target.scientificName,
+      claimedMissionId: missionId,
+      species: {
+        ...selectedSpecies.species,
+        commonName: target.commonName,
+        scientificName: target.scientificName,
+        category: target.category,
+        conservationStatus: target.conservationStatus,
+      },
+    };
+    setInventory(prev => prev.map(item => item.id === updated.id ? updated : item));
+    setSelectedSpecies(updated);
+    if (!alreadyClaimed) {
+      setStats(prev => ({
+        xp: prev.xp + (missionId ? 50 : 20),
+        captures: prev.captures,
+        targetsCaught: prev.targetsCaught + 1,
+        missionsAdvanced: prev.missionsAdvanced + (missionId ? 1 : 0),
+      }));
+    }
+  };
+
   const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
     const file = input.files?.[0];
@@ -222,6 +255,7 @@ export default function App() {
 
       setInventory(prev => [newRecord, ...prev]);
       setSelectedSpecies(newRecord);
+      setStats(prev => ({ ...prev, xp: prev.xp + 10, captures: prev.captures + 1 }));
       setActiveTab('dex');
     } catch (error) {
       console.error("Capture failed:", error);
@@ -301,6 +335,20 @@ export default function App() {
             {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
             Capture Specimen
           </button>
+          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-emerald-500/10 border border-emerald-500/25 rounded" title="Conservation XP">
+            <div className="flex flex-col leading-tight">
+              <span className="text-[8px] font-mono uppercase text-emerald-500/70 tracking-widest">XP</span>
+              <span className="text-xs font-bold text-emerald-300 font-mono">{stats.xp}</span>
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="text-[8px] font-mono uppercase text-emerald-500/70 tracking-widest">Caught</span>
+              <span className="text-xs font-bold text-emerald-300 font-mono">{stats.targetsCaught}</span>
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="text-[8px] font-mono uppercase text-emerald-500/70 tracking-widest">Missions</span>
+              <span className="text-xs font-bold text-emerald-300 font-mono">{stats.missionsAdvanced}</span>
+            </div>
+          </div>
           <div className="flex flex-col items-end">
             <span className="text-[10px] text-gray-400 uppercase tracking-widest leading-none mb-1">Field Operator</span>
             <span className="text-xs font-mono leading-none">{user?.displayName || 'Anonymous'}</span>
@@ -403,7 +451,10 @@ export default function App() {
                 {region && habitatRatios && (
                   <div className="absolute bottom-4 left-4 z-[500] max-w-xs bg-app-surface/90 backdrop-blur border border-app-line rounded-sm p-3">
                     <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">Bioregion</p>
-                    <p className="text-xs font-bold text-white mb-2">{region.displayName}</p>
+                    <p className="text-xs font-bold text-white">{region.displayName}</p>
+                    <p className="text-[9px] font-mono uppercase text-emerald-400/70 mb-2 tracking-widest">
+                      Authority: {jurisdiction.authority}
+                    </p>
                     <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">
                       Habitat ratios (n={habitatRatios.totalOccurrences.toLocaleString()})
                     </p>
@@ -442,7 +493,37 @@ export default function App() {
 
                     <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded">
                       <p className="text-[11px] text-gray-300 leading-relaxed">{selectedMission.description}</p>
+                      {selectedMission.category === 'Endangered' && (
+                        <p className="text-[9px] font-mono uppercase text-emerald-400/80 mt-2 tracking-widest">
+                          Source: {jurisdiction.authority}
+                        </p>
+                      )}
                     </div>
+
+                    {selectedMission.targetSpecies && selectedMission.targetSpecies.length > 0 && (() => {
+                      const targetName = selectedMission.targetSpecies[0];
+                      const progress = inventory.filter(
+                        e => e.claimedMissionId === selectedMission.id
+                      ).length;
+                      const required = 3;
+                      return (
+                        <div className="p-3 bg-app-bg border border-app-line rounded">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-[9px] font-mono uppercase text-gray-400">Mission Progress</p>
+                            <p className="text-[10px] font-mono text-emerald-400">{progress}/{required}</p>
+                          </div>
+                          <div className="h-1.5 bg-app-line rounded-sm overflow-hidden mb-2">
+                            <div
+                              className="h-full bg-emerald-500 transition-all"
+                              style={{ width: `${Math.min(100, (progress / required) * 100)}%` }}
+                            />
+                          </div>
+                          <p className="text-[9px] text-gray-500 italic">
+                            Capture {targetName} and claim for this mission to advance.
+                          </p>
+                        </div>
+                      );
+                    })()}
 
                     {coords && (
                       <div className="p-3 bg-app-bg border border-app-line rounded">
@@ -495,8 +576,20 @@ export default function App() {
                         {(() => {
                           const threat = getThreatForMission(selectedMission.category, selectedMission.title);
                           if (!threat) return null;
-                          const simulation = simulateThreat(threat, missionSoilData[selectedMission.id] || []);
-                          return <ThreatSimulationView simulation={simulation} />;
+                          const chosen = missionStrategy[selectedMission.id];
+                          const simulation = simulateThreat(threat, missionSoilData[selectedMission.id] || [], {
+                            strategy: chosen,
+                            nativeBiomassFactor: nativeDensity,
+                          });
+                          return (
+                            <ThreatSimulationView
+                              simulation={simulation}
+                              nativeDensity={nativeDensity}
+                              onStrategyChange={(s) =>
+                                setMissionStrategy(prev => ({ ...prev, [selectedMission.id]: s }))
+                              }
+                            />
+                          );
                         })()}
                       </>
                     )}
@@ -674,6 +767,67 @@ export default function App() {
                                <p key={i} className="text-[11px] text-red-400">• {h}</p>
                              ))}
                            </div>
+                        </div>
+                      )}
+
+                      {targets.length > 0 && (
+                        <div>
+                          <h4 className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-2">
+                            {selectedSpecies.claimedScientificName ? 'Claimed As' : 'Claim as Regional Target'}
+                          </h4>
+                          {selectedSpecies.claimedScientificName ? (
+                            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded">
+                              <p className="text-[11px] text-white font-bold">{selectedSpecies.species.commonName}</p>
+                              <p className="text-[9px] italic text-emerald-300">{selectedSpecies.claimedScientificName}</p>
+                              {selectedSpecies.claimedMissionId && (
+                                <p className="text-[9px] font-mono uppercase text-emerald-400 mt-1">+50 XP · Mission progress</p>
+                              )}
+                            </div>
+                          ) : (
+                            <select
+                              onChange={(e) => {
+                                if (!e.target.value) return;
+                                const [kind, taxonKeyStr, missionId] = e.target.value.split('|');
+                                const taxonKey = Number(taxonKeyStr);
+                                const target =
+                                  kind === 'mission'
+                                    ? (() => {
+                                        const m = missions.find(mm => mm.id === missionId);
+                                        const name = m?.targetSpecies?.[0];
+                                        if (!name) return null;
+                                        const existing = [...invasives, ...endangered].find(t => t.scientificName === name);
+                                        if (!existing) return null;
+                                        return {
+                                          taxonKey: existing.taxonKey,
+                                          scientificName: existing.scientificName,
+                                          commonName: existing.commonName,
+                                          category: existing.category,
+                                          conservationStatus: 'Unknown' as const,
+                                          imageUrl: existing.imageUrl,
+                                        } satisfies TargetSpecies;
+                                      })()
+                                    : targets.find(t => t.taxonKey === taxonKey) || null;
+                                if (!target) return;
+                                claimCapture(target, kind === 'mission' ? missionId : undefined);
+                              }}
+                              defaultValue=""
+                              className="w-full bg-app-subtle border border-app-line rounded p-3 text-xs text-white focus:outline-none focus:border-emerald-500"
+                            >
+                              <option value="" disabled>Select a match…</option>
+                              {missions
+                                .filter(m => m.targetSpecies && m.targetSpecies.length > 0)
+                                .map(m => (
+                                  <option key={`m-${m.id}`} value={`mission|0|${m.id}`}>
+                                    🎯 Mission: {m.targetSpecies![0]} ({m.title})
+                                  </option>
+                                ))}
+                              {targets.map(t => (
+                                <option key={t.taxonKey} value={`target|${t.taxonKey}|`}>
+                                  {t.commonName} — {t.scientificName}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       )}
 
