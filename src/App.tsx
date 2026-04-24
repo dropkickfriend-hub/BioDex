@@ -2,13 +2,26 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target, CheckCircle2, Globe, Navigation, Layers, Send, Upload, X } from 'lucide-react';
 import { cn } from './lib/utils';
-import { CollectionEntry, FieldMission } from './types';
-import { identifySpecies } from './services/geminiService';
+import { CollectionEntry, FieldMission, Species } from './types';
 
 const DEMO_USER = {
   uid: 'demo-operator',
   displayName: 'Demo Operator',
 };
+
+const getMockSpecies = (imageUrl: string): Species => ({
+  id: 'mock',
+  commonName: 'American Black Bear',
+  scientificName: 'Ursus americanus',
+  category: 'Fauna',
+  conservationStatus: 'Least Concern',
+  description: 'Large carnivorous mammal native to North America.',
+  habitat: 'Forests and mountainous regions',
+  hazards: ['Dangerous if provoked', 'Keep distance'],
+  scientificAccuracyScore: 0.92,
+  imageUrl,
+  identifiedAt: new Date().toISOString(),
+});
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'intel' | 'dex' | 'community'>('intel');
@@ -117,11 +130,9 @@ export default function App() {
         reader.readAsDataURL(file);
       });
 
-      const identified = await identifySpecies(base64);
-
       const newRecord: CollectionEntry = {
         id: crypto.randomUUID(),
-        species: identified,
+        species: getMockSpecies(`data:image/jpeg;base64,${base64}`),
         userId: user.uid,
         timestamp: new Date().toISOString(),
         reviewStatus: 'Draft',
@@ -136,8 +147,8 @@ export default function App() {
       setSelectedSpecies(newRecord);
       setActiveTab('dex');
     } catch (error) {
-      console.error("Identification failed:", error);
-      const message = error instanceof Error ? error.message : 'Capture analysis failed. Retry transmission.';
+      console.error("Capture failed:", error);
+      const message = error instanceof Error ? error.message : 'Capture failed. Retry.';
       setUploadError(message);
     } finally {
       setIsAnalyzing(false);
