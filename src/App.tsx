@@ -47,6 +47,8 @@ export default function App() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [manualLat, setManualLat] = useState('');
   const [manualLng, setManualLng] = useState('');
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const watchIdRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
@@ -67,16 +69,28 @@ export default function App() {
 
   useEffect(() => {
     if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setCoords({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => console.warn('Geolocation error:', error),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      const handlePosition = (position: GeolocationPosition) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        setCoords({ lat: latitude, lng: longitude });
+        setGpsAccuracy(accuracy);
+      };
+
+      const handleError = (err: GeolocationPositionError) => {
+        console.warn('GPS error:', err.message);
+        setGpsAccuracy(-1);
+      };
+
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        handlePosition,
+        handleError,
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
       );
+
+      return () => {
+        if (watchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+        }
+      };
     }
   }, []);
 
@@ -919,7 +933,9 @@ export default function App() {
             SYS_CONNECTED
           </span>
           <span className="hidden sm:inline">LOC: ENCRYPTED_MESH</span>
-          <span className="hidden sm:inline">GPS: ACTIVE_LOCK</span>
+          <span className="hidden sm:inline">
+            GPS: {gpsAccuracy === null ? 'ACQUIRING' : gpsAccuracy === -1 ? 'ERROR' : gpsAccuracy < 100 ? `LOCK ±${Math.round(gpsAccuracy)}m` : gpsAccuracy < 1000 ? `±${Math.round(gpsAccuracy)}m` : `±${(gpsAccuracy / 1000).toFixed(1)}km`}
+          </span>
         </div>
         <div className="text-right uppercase tracking-tighter opacity-70">
           Safety Protocol Delta-9 // 18+ Access Enforced
