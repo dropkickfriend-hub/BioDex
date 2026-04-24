@@ -6,6 +6,8 @@ import { CollectionEntry, FieldMission, Species } from './types';
 import MapView from './components/MapView';
 import { fetchSpeciesNearLocation } from './services/gbifService';
 import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
+import { getThreatForMission, simulateThreat } from './services/threatSimulation';
+import ThreatSimulationView from './components/ThreatSimulationView';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -350,6 +352,13 @@ export default function App() {
                             </div>
                           </div>
                         )}
+
+                        {(() => {
+                          const threat = getThreatForMission(selectedMission.category, selectedMission.title);
+                          if (!threat) return null;
+                          const simulation = simulateThreat(threat, missionSoilData[selectedMission.id] || []);
+                          return <ThreatSimulationView simulation={simulation} />;
+                        })()}
                       </>
                     )}
 
