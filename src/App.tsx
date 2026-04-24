@@ -4,6 +4,8 @@ import { Camera, Book, Search, Activity, AlertTriangle, Loader2, MapPin, Target,
 import { cn } from './lib/utils';
 import { CollectionEntry, FieldMission, Species } from './types';
 import MapView from './components/MapView';
+import { fetchSpeciesNearLocation } from './services/gbifService';
+import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
 
 const DEMO_USER = {
   uid: 'demo-operator',
@@ -36,6 +38,9 @@ export default function App() {
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [userObservations, setUserObservations] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [missionSoilData, setMissionSoilData] = useState<{ [key: string]: SoilData[] }>({});
+  const [missionSpecies, setMissionSpecies] = useState<{ [key: string]: Species[] }>({});
+  const [isLoadingData, setIsLoadingData] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const triggerCapture = () => {
@@ -87,6 +92,32 @@ export default function App() {
         }
       ];
       setMissions(mockMissions);
+
+      // Fetch soil and species data for missions
+      setIsLoadingData(true);
+      const fetchMissionData = async () => {
+        const soilDataMap: { [key: string]: SoilData[] } = {};
+        const speciesMap: { [key: string]: Species[] } = {};
+
+        for (const mission of mockMissions) {
+          try {
+            const [soil, species] = await Promise.all([
+              fetchSoilData(mission.location.lat, mission.location.lng),
+              fetchSpeciesNearLocation(mission.location.lat, mission.location.lng, 5, 15)
+            ]);
+            soilDataMap[mission.id] = soil;
+            speciesMap[mission.id] = species;
+          } catch (error) {
+            console.error(`Failed to fetch data for mission ${mission.id}:`, error);
+          }
+        }
+
+        setMissionSoilData(soilDataMap);
+        setMissionSpecies(speciesMap);
+        setIsLoadingData(false);
+      };
+
+      fetchMissionData();
     }
   }, [coords]);
 
@@ -282,6 +313,44 @@ export default function App() {
                           ) * 1000)} m
                         </p>
                       </div>
+                    )}
+
+                    {isLoadingData ? (
+                      <div className="p-4 bg-app-bg border border-app-line rounded flex items-center justify-center gap-2 text-gray-400">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="text-[10px] font-mono uppercase">Loading site data...</span>
+                      </div>
+                    ) : (
+                      <>
+                        {missionSoilData[selectedMission.id] && missionSoilData[selectedMission.id].length > 0 && (
+                          <div className="p-3 bg-amber-900/10 border border-amber-500/20 rounded">
+                            <p className="text-[9px] font-mono uppercase text-amber-500 mb-2">Soil Profile</p>
+                            <div className="space-y-1">
+                              {missionSoilData[selectedMission.id].slice(0, 2).map((soil, idx) => (
+                                <p key={idx} className="text-[9px] text-amber-200">
+                                  {interpretSoilData([soil])}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {missionSpecies[selectedMission.id] && missionSpecies[selectedMission.id].length > 0 && (
+                          <div className="p-3 bg-blue-900/10 border border-blue-500/20 rounded">
+                            <p className="text-[9px] font-mono uppercase text-blue-500 mb-2">
+                              Species Recorded ({missionSpecies[selectedMission.id].length})
+                            </p>
+                            <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                              {missionSpecies[selectedMission.id].slice(0, 5).map((sp, idx) => (
+                                <div key={idx} className="text-[8px]">
+                                  <p className="text-blue-300 font-bold">{sp.commonName}</p>
+                                  <p className="text-blue-200 italic">{sp.scientificName}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
 
                     <button
