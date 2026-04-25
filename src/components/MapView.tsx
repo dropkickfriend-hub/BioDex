@@ -1,13 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import { FieldMission } from '../types';
+
+export type SatelliteLayer = 'none' | 'truecolor' | 'ndvi' | 'landcover';
 
 interface MapViewProps {
   userCoords: { lat: number; lng: number } | null;
   missions: FieldMission[];
   selectedMission: FieldMission | null;
   onMissionSelect: (mission: FieldMission) => void;
-  showLandCover?: boolean;
+  satelliteLayer?: SatelliteLayer;
   scanRadiusKm?: number;
 }
 
@@ -25,9 +27,24 @@ const missionIcon = (priority: string) =>
     popupAnchor: [0, -40],
   });
 
-// ESA WorldCover 2021 via a free ArcGIS tile service. Coarse habitat classes
-// (forest / cropland / grassland / urban / water / wetland).
-const LAND_COVER_URL =
+// NASA GIBS — free, no key. Daily MODIS / VIIRS imagery.
+// Date is yesterday in UTC because GIBS has ~24h latency.
+function yesterdayISO() {
+  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+const GIBS_TRUECOLOR = (date: string) =>
+  `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`;
+
+// MODIS Terra NDVI (Normalized Difference Vegetation Index) - the actual
+// satellite proxy for native plant vigor used in conservation modeling.
+// Available at 8-day rolling composite.
+const GIBS_NDVI =
+  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day/default/2024-09-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png';
+
+// ESA WorldCover 2021 (categorical landcover).
+const GIBS_LANDCOVER =
   'https://services.terrascope.be/wmts/v2?layer=WORLDCOVER_2021_MAP&style=default&tilematrixset=EPSG%3A3857&Service=WMTS&Request=GetTile&Version=1.0.0&Format=image%2Fpng&TileMatrix={z}&TileCol={x}&TileRow={y}';
 
 export default function MapView({
@@ -35,15 +52,16 @@ export default function MapView({
   missions,
   selectedMission,
   onMissionSelect,
-  showLandCover = false,
+  satelliteLayer = 'none',
   scanRadiusKm = 10,
 }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const scanCircleRef = useRef<L.Circle | null>(null);
-  const landCoverRef = useRef<L.TileLayer | null>(null);
+  const overlayRef = useRef<L.TileLayer | null>(null);
   const missionMarkersRef = useRef<{ [key: string]: L.Marker }>({});
+  const trueColorDate = useMemo(() => yesterdayISO(), []);
 
   // Initialize map once
   useEffect(() => {
@@ -51,7 +69,7 @@ export default function MapView({
 
     const map = L.map(mapRef.current).setView([20, 0], 2);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap · ESA WorldCover',
+      attribution: '&copy; OpenStreetMap · NASA GIBS · ESA WorldCover',
       maxZoom: 19,
     }).addTo(map);
 
@@ -69,22 +87,40 @@ export default function MapView({
     };
   }, []);
 
-  // Land-cover overlay toggle
+  // Satellite / habitat overlay swap
   useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    if (showLandCover) {
-      if (!landCoverRef.current) {
-        landCoverRef.current = L.tileLayer(LAND_COVER_URL, {
-          opacity: 0.55,
-          attribution: '&copy; ESA WorldCover 2021',
-          maxZoom: 18,
-        });
-      }
-      landCoverRef.current.addTo(mapInstanceRef.current);
-    } else if (landCoverRef.current) {
-      mapInstanceRef.current.removeLayer(landCoverRef.current);
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (overlayRef.current) {
+      map.removeLayer(overlayRef.current);
+      overlayRef.current = null;
     }
-  }, [showLandCover]);
+
+    if (satelliteLayer === 'none') return;
+
+    let url: string;
+    let attribution: string;
+    let opacity = 0.85;
+    if (satelliteLayer === 'truecolor') {
+      url = GIBS_TRUECOLOR(trueColorDate);
+      attribution = `NASA GIBS VIIRS True Color · ${trueColorDate}`;
+    } else if (satelliteLayer === 'ndvi') {
+      url = GIBS_NDVI;
+      attribution = 'NASA GIBS MODIS NDVI 8-Day';
+      opacity = 0.7;
+    } else {
+      url = GIBS_LANDCOVER;
+      attribution = 'ESA WorldCover 2021';
+      opacity = 0.55;
+    }
+
+    overlayRef.current = L.tileLayer(url, {
+      opacity,
+      attribution,
+      maxZoom: 18,
+    }).addTo(map);
+  }, [satelliteLayer, trueColorDate]);
 
   // Update user marker and map view when userCoords changes
   useEffect(() => {

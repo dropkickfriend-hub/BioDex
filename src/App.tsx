@@ -9,13 +9,13 @@ import {
   fetchSpeciesNearLocation,
   fetchRegionalTargets,
   fetchInvasiveSpeciesForCountry,
-  fetchThreatenedSpeciesForCountry,
   fetchHabitatRatios,
   estimateNativeDensity,
   TargetSpecies,
   RegionalThreat,
   HabitatRatios,
 } from './services/gbifService';
+import { fetchProtectedSpecies } from './services/protectedSpeciesService';
 import { fetchSoilData, interpretSoilData, SoilData } from './services/soilGridsService';
 import { CounterStrategy, getThreatForMission, simulateThreat } from './services/threatSimulation';
 import ThreatSimulationView from './components/ThreatSimulationView';
@@ -63,9 +63,11 @@ export default function App() {
   const [targets, setTargets] = useState<TargetSpecies[]>([]);
   const [invasives, setInvasives] = useState<RegionalThreat[]>([]);
   const [endangered, setEndangered] = useState<RegionalThreat[]>([]);
+  const [protectedSource, setProtectedSource] = useState<string>('');
+  const [protectedAuthoritative, setProtectedAuthoritative] = useState<boolean>(false);
   const [habitatRatios, setHabitatRatios] = useState<HabitatRatios | null>(null);
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
-  const [showLandCover, setShowLandCover] = useState(false);
+  const [satelliteLayer, setSatelliteLayer] = useState<'none' | 'truecolor' | 'ndvi' | 'landcover'>('none');
   const [missionStrategy, setMissionStrategy] = useState<Record<string, CounterStrategy>>({});
   const [stats, setStats] = useState<PlayerStats>({ xp: 0, captures: 0, targetsCaught: 0, missionsAdvanced: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,13 +100,15 @@ export default function App() {
       setHabitatRatios(ratios);
 
       if (ctx?.countryCode) {
-        const [inv, end] = await Promise.all([
+        const [inv, protectedList] = await Promise.all([
           fetchInvasiveSpeciesForCountry(ctx.countryCode, 6),
-          fetchThreatenedSpeciesForCountry(ctx.countryCode, 6),
+          fetchProtectedSpecies(ctx.countryCode, coords.lat, coords.lng, 6),
         ]);
         if (cancelled) return;
         setInvasives(inv);
-        setEndangered(end);
+        setEndangered(protectedList.threats);
+        setProtectedSource(protectedList.source);
+        setProtectedAuthoritative(protectedList.authoritative);
       }
       setIsLoadingTargets(false);
     })();
@@ -380,7 +384,7 @@ export default function App() {
                   missions={missions}
                   selectedMission={selectedMission}
                   onMissionSelect={setSelectedMission}
-                  showLandCover={showLandCover}
+                  satelliteLayer={satelliteLayer}
                   scanRadiusKm={10}
                 />
 
@@ -431,20 +435,33 @@ export default function App() {
                 )}
 
                 {/* Map layer controls */}
-                <div className="absolute bottom-4 right-4 z-[500] flex flex-col gap-2">
-                  <button
-                    onClick={() => setShowLandCover(v => !v)}
-                    className={cn(
-                      'inline-flex items-center gap-2 px-3 py-2 rounded-sm border text-[10px] font-bold uppercase tracking-widest transition-all backdrop-blur',
-                      showLandCover
-                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                        : 'bg-app-surface/90 border-app-line text-gray-300 hover:text-white'
-                    )}
-                    title="Toggle ESA WorldCover 2021 habitat classes"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    Land Cover
-                  </button>
+                <div className="absolute bottom-4 right-4 z-[500] flex flex-col gap-1 bg-app-surface/90 backdrop-blur border border-app-line rounded-sm p-1">
+                  {([
+                    { id: 'none', label: 'OSM' },
+                    { id: 'truecolor', label: 'Satellite' },
+                    { id: 'ndvi', label: 'NDVI' },
+                    { id: 'landcover', label: 'Land Cover' },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSatelliteLayer(opt.id)}
+                      className={cn(
+                        'inline-flex items-center gap-2 px-3 py-1.5 rounded-sm text-[10px] font-bold uppercase tracking-widest transition-all',
+                        satelliteLayer === opt.id
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      )}
+                      title={
+                        opt.id === 'truecolor' ? 'NASA GIBS VIIRS daily true-color imagery' :
+                        opt.id === 'ndvi' ? 'MODIS NDVI 8-day vegetation greenness composite' :
+                        opt.id === 'landcover' ? 'ESA WorldCover 2021 habitat classes' :
+                        'OpenStreetMap base'
+                      }
+                    >
+                      <Layers className="w-3 h-3" />
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Region + habitat ratios card */}
@@ -452,9 +469,14 @@ export default function App() {
                   <div className="absolute bottom-4 left-4 z-[500] max-w-xs bg-app-surface/90 backdrop-blur border border-app-line rounded-sm p-3">
                     <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">Bioregion</p>
                     <p className="text-xs font-bold text-white">{region.displayName}</p>
-                    <p className="text-[9px] font-mono uppercase text-emerald-400/70 mb-2 tracking-widest">
+                    <p className="text-[9px] font-mono uppercase text-emerald-400/70 tracking-widest">
                       Authority: {jurisdiction.authority}
                     </p>
+                    {protectedSource && (
+                      <p className="text-[9px] font-mono uppercase text-gray-500 mb-2 tracking-widest">
+                        Listed via: <span className={protectedAuthoritative ? 'text-emerald-300' : 'text-amber-300'}>{protectedSource}</span>
+                      </p>
+                    )}
                     <p className="text-[9px] font-mono uppercase text-gray-500 mb-1">
                       Habitat ratios (n={habitatRatios.totalOccurrences.toLocaleString()})
                     </p>
@@ -494,9 +516,19 @@ export default function App() {
                     <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded">
                       <p className="text-[11px] text-gray-300 leading-relaxed">{selectedMission.description}</p>
                       {selectedMission.category === 'Endangered' && (
-                        <p className="text-[9px] font-mono uppercase text-emerald-400/80 mt-2 tracking-widest">
-                          Source: {jurisdiction.authority}
-                        </p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-[9px] font-mono uppercase text-emerald-400/80 tracking-widest">
+                            {protectedSource || jurisdiction.authority}
+                          </span>
+                          <span className={cn(
+                            'text-[8px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded-sm border',
+                            protectedAuthoritative
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                              : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                          )}>
+                            {protectedAuthoritative ? 'Official' : 'Fallback'}
+                          </span>
+                        </div>
                       )}
                     </div>
 
